@@ -186,6 +186,17 @@ class ColorAdjustmentInterface(tk.Toplevel):
         self.after(100, self.display_original_image)
         
     def create_interface(self):
+        # Configure modern button style
+        style = ttk.Style()
+        style.configure('Modern.TButton',
+                         padding=(10, 5),
+                         font=('Arial', 9, 'bold'),
+                         relief='flat',
+                         borderwidth=1)
+        style.map('Modern.TButton',
+                 background=[('active', '#007ACC'), ('pressed', '#005A9E')],
+                 foreground=[('active', 'white'), ('pressed', 'white')])
+        
         # Main container
         main_container = ttk.Frame(self)
         main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -253,6 +264,7 @@ class ColorAdjustmentInterface(tk.Toplevel):
                 from_=min_val,
                 to=max_val,
                 orient=tk.HORIZONTAL,
+                length=200,  # Increased width for more precise control
                 command=lambda v, n=name: self.update_slider(n, v, None)
             )
             slider.set(default)
@@ -277,12 +289,23 @@ class ColorAdjustmentInterface(tk.Toplevel):
         buttons_frame = ttk.Frame(controls_frame)
         buttons_frame.pack(fill=tk.X, pady=20)
         
-        ttk.Button(buttons_frame, text="🤖 Auto",
-                  command=self.auto_adjust).pack(side=tk.LEFT, padx=5)
-        ttk.Button(buttons_frame, text="Reset All",
-                  command=self.reset_all).pack(side=tk.LEFT, padx=5)
-        ttk.Button(buttons_frame, text="Save",
-                  command=self.save_image).pack(side=tk.LEFT, padx=5)
+        # Auto and Reset buttons frame
+        auto_reset_frame = ttk.Frame(buttons_frame)
+        auto_reset_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Button(auto_reset_frame, text="🤖 Auto",
+                  command=self.auto_adjust, style='Modern.TButton').pack(side=tk.LEFT, padx=5, pady=5)
+        ttk.Button(auto_reset_frame, text="Reset All",
+                  command=self.reset_all, style='Modern.TButton').pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # Save buttons frame
+        save_frame = ttk.Frame(buttons_frame)
+        save_frame.pack(fill=tk.X)
+        
+        ttk.Button(save_frame, text="📄 Save PDF",
+                  command=self.save_as_pdf, style='Modern.TButton').pack(side=tk.LEFT, padx=5, pady=5)
+        ttk.Button(save_frame, text="🖼️ Save JPG",
+                  command=self.save_as_jpg, style='Modern.TButton').pack(side=tk.LEFT, padx=5, pady=5)
         
         self.display_adjusted_image()
         
@@ -551,6 +574,46 @@ class ColorAdjustmentInterface(tk.Toplevel):
             
             messagebox.showinfo("Success", "Image saved successfully!")
             
+    def save_as_pdf(self):
+        if self.original_image is None:
+            return
+            
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".pdf",
+            filetypes=[("PDF files", "*.pdf")]
+        )
+        
+        if file_path:
+            # Process full resolution image
+            original_rgb = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2RGB)
+            adjusted = self.processor.apply_adjustments(original_rgb)
+            
+            # Convert to PIL Image and save as PDF
+            img = Image.fromarray(adjusted)
+            img.save(file_path, "PDF", resolution=300.0)
+            
+            messagebox.showinfo("Success", "PDF saved successfully!")
+            
+    def save_as_jpg(self):
+        if self.original_image is None:
+            return
+            
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".jpg",
+            filetypes=[("JPEG files", "*.jpg")]
+        )
+        
+        if file_path:
+            # Process full resolution image
+            original_rgb = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2RGB)
+            adjusted = self.processor.apply_adjustments(original_rgb)
+            
+            # Save as JPG with high quality
+            cv2.imwrite(file_path, cv2.cvtColor(adjusted, cv2.COLOR_RGB2BGR),
+                       [cv2.IMWRITE_JPEG_QUALITY, 95])
+            
+            messagebox.showinfo("Success", "JPG saved successfully!")
+            
     def destroy(self):
         self.processing = False
         super().destroy()
@@ -570,10 +633,18 @@ class ImageCropper:
         self.offset_x = 0
         self.offset_y = 0
         self.cropped_image = None
+        self.dragging_point = None  # Track which point is being dragged
 
-        # Configure style
+        # Configure modern button style
         style = ttk.Style()
-        style.configure('Custom.TButton', padding=10)
+        style.configure('Modern.TButton',
+                         padding=(10, 5),
+                         font=('Arial', 9, 'bold'),
+                         relief='flat',
+                         borderwidth=1)
+        style.map('Modern.TButton',
+                 background=[('active', '#007ACC'), ('pressed', '#005A9E')],
+                 foreground=[('active', 'white'), ('pressed', 'white')])
         
         # Create main frame
         main_frame = ttk.Frame(root)
@@ -607,6 +678,8 @@ class ImageCropper:
         
         # Bind events
         self.canvas.bind("<Button-1>", self.add_point)
+        self.canvas.bind("<B1-Motion>", self.drag_point)
+        self.canvas.bind("<ButtonRelease-1>", self.release_point)
         self.canvas.bind("<MouseWheel>", self.zoom)
         self.canvas.bind("<Button-4>", self.zoom)  # Linux support
         self.canvas.bind("<Button-5>", self.zoom)  # Linux support
@@ -622,8 +695,8 @@ class ImageCropper:
             pass  # Drag and drop not available
 
     def create_button(self, parent, text, command, tooltip):
-        btn = ttk.Button(parent, text=text, command=command, style='Custom.TButton')
-        btn.pack(side=tk.LEFT, padx=5)
+        btn = ttk.Button(parent, text=text, command=command, style='Modern.TButton')
+        btn.pack(side=tk.LEFT, padx=5, pady=5)
         self.create_tooltip(btn, tooltip)
 
     def create_tooltip(self, widget, text):
@@ -736,8 +809,32 @@ class ImageCropper:
         if self.image is None:
             return
             
+        # Check if we're clicking on an existing point to start dragging
         if len(self.points) >= 4:
-            self.points = []
+            # Convert canvas coordinates to image coordinates for checking existing points
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+            height, width = self.image.shape[:2]
+            
+            ratio = min(canvas_width/width, canvas_height/height)
+            new_width = int(width * ratio * self.scale)
+            new_height = int(height * ratio * self.scale)
+            
+            center_x = canvas_width//2 + self.offset_x
+            center_y = canvas_height//2 + self.offset_y
+            
+            # Check if click is near any existing point
+            for i, point in enumerate(self.points):
+                scaled_x = point[0] * ratio * self.scale + center_x - new_width//2
+                scaled_y = point[1] * ratio * self.scale + center_y - new_height//2
+                
+                # Check if click is within 10 pixels of a point
+                if abs(event.x - scaled_x) < 10 and abs(event.y - scaled_y) < 10:
+                    self.dragging_point = i
+                    return  # Start dragging this point
+            
+            # If not clicking on an existing point, do nothing (don't reset)
+            return
             
         # Convert canvas coordinates to image coordinates
         canvas_width = self.canvas.winfo_width()
@@ -895,15 +992,83 @@ class ImageCropper:
 
     def end_pan(self, event):
         self.pan_start = None
+        
+    def drag_point(self, event):
+        if self.image is None or self.dragging_point is None:
+            return
+            
+        # Convert canvas coordinates to image coordinates
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        height, width = self.image.shape[:2]
+        
+        ratio = min(canvas_width/width, canvas_height/height)
+        new_width = int(width * ratio * self.scale)
+        new_height = int(height * ratio * self.scale)
+        
+        center_x = canvas_width//2 + self.offset_x
+        center_y = canvas_height//2 + self.offset_y
+        
+        # Convert mouse coordinates to original image coordinates
+        img_x = (event.x - center_x + new_width//2) / (ratio * self.scale)
+        img_y = (event.y - center_y + new_height//2) / (ratio * self.scale)
+        
+        # Clamp to image bounds
+        img_x = max(0, min(width-1, img_x))
+        img_y = max(0, min(height-1, img_y))
+        
+        # Update the dragged point
+        self.points[self.dragging_point] = [img_x, img_y]
+        self.display_image()
+    
+    def release_point(self, event):
+        self.dragging_point = None
 
     def zoom(self, event):
         if self.image is None:
             return
             
+        # Calculate zoom factor (consistent speed regardless of zoom level)
+        zoom_factor = 1.1  # 10% zoom per step
+        
+        # Get canvas dimensions
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        # Get current image dimensions
+        height, width = self.image.shape[:2]
+        ratio = min(canvas_width/width, canvas_height/height)
+        current_width = int(width * ratio * self.scale)
+        current_height = int(height * ratio * self.scale)
+        
+        # Calculate current image position
+        image_left = canvas_width//2 + self.offset_x - current_width//2
+        image_top = canvas_height//2 + self.offset_y - current_height//2
+        
+        # Get mouse position relative to image top-left
+        mouse_x_rel = event.x - image_left
+        mouse_y_rel = event.y - image_top
+        
+        # Calculate ratios of mouse position within the image
+        ratio_x = mouse_x_rel / current_width if current_width != 0 else 0.5
+        ratio_y = mouse_y_rel / current_height if current_height != 0 else 0.5
+        
         if event.num == 5 or event.delta < 0:  # zoom out
-            self.scale = max(0.1, self.scale - 0.1)
+            self.scale = max(0.1, self.scale / zoom_factor)
         else:  # zoom in
-            self.scale = min(5.0, self.scale + 0.1)
+            self.scale = min(5.0, self.scale * zoom_factor)
+            
+        # Recalculate new image dimensions after zoom
+        new_width = int(width * ratio * self.scale)
+        new_height = int(height * ratio * self.scale)
+        
+        # Calculate new image position to keep the mouse position fixed
+        new_image_left = event.x - ratio_x * new_width
+        new_image_top = event.y - ratio_y * new_height
+        
+        # Update offset based on new image position
+        self.offset_x = new_image_left + new_width//2 - canvas_width//2
+        self.offset_y = new_image_top + new_height//2 - canvas_height//2
             
         self.display_image()
 
