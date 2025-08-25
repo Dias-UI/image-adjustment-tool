@@ -174,7 +174,8 @@ class ColorAdjustmentInterface(tk.Toplevel):
     def __init__(self, parent, image):
         super().__init__(parent)
         self.title("Color Correction - Cropped Image")
-        self.geometry("1100x800")  # Increased height to prevent buttons from being cut off
+        # Make window responsive - remove fixed geometry
+        self.minsize(800, 600)  # Set minimum window size
         
         self.original_image = image  # This is now the cropped image
         self.processor = ImageProcessor()
@@ -184,6 +185,9 @@ class ColorAdjustmentInterface(tk.Toplevel):
         self.create_interface()
         # Schedule the original image display after the window is properly initialized
         self.after(100, self.display_original_image)
+        
+        # Bind window resize event
+        self.bind("<Configure>", self.on_window_resize)
         
     def create_interface(self):
         # Configure modern button style
@@ -201,28 +205,46 @@ class ColorAdjustmentInterface(tk.Toplevel):
         main_container = ttk.Frame(self)
         main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
+        # Configure grid weights for proper resizing
+        main_container.columnconfigure(0, weight=1)  # Preview frame column
+        main_container.columnconfigure(1, weight=0)  # Controls frame column
+        main_container.rowconfigure(0, weight=1)     # Main row
+        
         # Image preview frame
         preview_frame = ttk.Frame(main_container)
-        preview_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        preview_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        
+        # Configure grid weights for preview frame
+        preview_frame.columnconfigure(0, weight=1)
+        preview_frame.rowconfigure(1, weight=1)  # Canvas frame row
         
         # Add labels for the preview canvases
         original_label = ttk.Label(preview_frame, text="Original (Cropped)", font=('Arial', 10, 'bold'))
-        original_label.pack(side=tk.TOP, anchor=tk.W, padx=5, pady=(0,5))
+        original_label.grid(row=0, column=0, sticky="w", padx=5, pady=(0,5))
+        
+        # Create a frame for the canvases to ensure proper resizing
+        canvas_frame = ttk.Frame(preview_frame)
+        canvas_frame.grid(row=1, column=0, sticky="nsew")
+        
+        # Configure grid weights for canvas frame
+        canvas_frame.columnconfigure(0, weight=1)
+        canvas_frame.columnconfigure(1, weight=1)
+        canvas_frame.rowconfigure(0, weight=1)
         
         # Original image preview
-        self.original_canvas = tk.Canvas(preview_frame, bg='#2c2c2c')
-        self.original_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
+        self.original_canvas = tk.Canvas(canvas_frame, bg='#2c2c2c')
+        self.original_canvas.grid(row=0, column=0, sticky="nsew", padx=5)
         
         adjusted_label = ttk.Label(preview_frame, text="Adjusted", font=('Arial', 10, 'bold'))
-        adjusted_label.pack(side=tk.TOP, anchor=tk.W, padx=5, pady=(0,5))
+        adjusted_label.grid(row=2, column=0, sticky="w", padx=5, pady=(5,0))
         
         # Adjusted image preview
-        self.adjusted_canvas = tk.Canvas(preview_frame, bg='#2c2c2c')
-        self.adjusted_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
+        self.adjusted_canvas = tk.Canvas(canvas_frame, bg='#2c2c2c')
+        self.adjusted_canvas.grid(row=0, column=1, sticky="nsew", padx=5)
         
         # Controls frame
         controls_frame = ttk.Frame(main_container, padding="10")
-        controls_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        controls_frame.grid(row=0, column=1, sticky="nsew")
         
         # Slider configurations
         sliders_config = [
@@ -264,7 +286,6 @@ class ColorAdjustmentInterface(tk.Toplevel):
                 from_=min_val,
                 to=max_val,
                 orient=tk.HORIZONTAL,
-                length=200,  # Increased width for more precise control
                 command=lambda v, n=name: self.update_slider(n, v, None)
             )
             slider.set(default)
@@ -287,7 +308,7 @@ class ColorAdjustmentInterface(tk.Toplevel):
         
         # Buttons frame
         buttons_frame = ttk.Frame(controls_frame)
-        buttons_frame.pack(fill=tk.X, pady=20)
+        buttons_frame.pack(fill=tk.X, pady=20, expand=False)
         
         # Auto and Reset buttons frame
         auto_reset_frame = ttk.Frame(buttons_frame)
@@ -307,6 +328,19 @@ class ColorAdjustmentInterface(tk.Toplevel):
         ttk.Button(save_frame, text="🖼️ Save JPG",
                   command=self.save_as_jpg, style='Modern.TButton').pack(side=tk.LEFT, padx=5, pady=5)
         
+        self.display_adjusted_image()
+        
+    def on_window_resize(self, event):
+        # Only respond to the main window resize, not child widgets
+        if event.widget == self:
+            # Schedule image updates to avoid excessive updates during resizing
+            if hasattr(self, '_resize_timer'):
+                self.after_cancel(self._resize_timer)
+            self._resize_timer = self.after(100, self._update_canvases)
+            
+    def _update_canvases(self):
+        # Update both canvases when window is resized
+        self.display_original_image()
         self.display_adjusted_image()
         
     def update_slider(self, name, value, label):
@@ -495,6 +529,7 @@ class ColorAdjustmentInterface(tk.Toplevel):
         canvas_width = self.adjusted_canvas.winfo_width()
         canvas_height = self.adjusted_canvas.winfo_height()
         
+        # Always try to display, even if canvas is small
         if canvas_width <= 1 or canvas_height <= 1:
             # Canvas not ready yet, try again
             self.after(30, self.display_adjusted_image)
@@ -653,6 +688,9 @@ class ImageCropper:
         # Create canvas
         self.canvas = tk.Canvas(main_frame, cursor="cross", bg='#2c2c2c')
         self.canvas.pack(fill=tk.BOTH, expand=True)
+        
+        # Bind window resize event
+        root.bind("<Configure>", self.on_window_resize)
         
         # Create bottom frame with modern styling
         button_frame = ttk.Frame(root, padding="10")
@@ -1078,6 +1116,14 @@ class ImageCropper:
             self.open_image(file_path.strip('{}'))
         else:
             messagebox.showerror("Error", "Please drop a valid image file")
+            
+    def on_window_resize(self, event):
+        # Only respond to the main window resize, not child widgets
+        if event.widget == self.root:
+            # Schedule image updates to avoid excessive updates during resizing
+            if hasattr(self, '_resize_timer'):
+                self.root.after_cancel(self._resize_timer)
+            self._resize_timer = self.root.after(100, self.display_image)
 
 if __name__ == "__main__":
     try:
@@ -1087,6 +1133,7 @@ if __name__ == "__main__":
         # Fall back to regular Tk if tkinterdnd2 is not available
         root = tk.Tk()
     
-    root.geometry("1200x800")
+    # Make window responsive - remove fixed geometry
+    root.minsize(800, 600)  # Set minimum window size
     app = ImageCropper(root)
     root.mainloop()
